@@ -6,6 +6,7 @@
 
 # Compressor / Equalizer for microphone input
 
+import math
 import sys
 import pyaudio as pa
 import array
@@ -17,6 +18,50 @@ rate = 48000
 
 # Window size (latency) in samples.
 window = 1024
+
+
+class Compressor(object):
+    """Sample compressor."""
+    def __init__(self,
+                 threshold=-15,
+                 ratio=8.0,
+                 pregain=3.0,
+                 smooth=0.5):
+        """
+        threshold is input level (dB) at which break occurs.
+        ratio is compression ratio at break level.
+        pregain is preamplifier gain (dB).
+        smooth is a smoothing constant between
+          0.0 (use only current power measurement)
+          1.0 (never change the power measurement)
+        """
+        self.threshold = threshold
+        self.ratio = ratio
+        self.pregain = pregain
+        self.smooth = smooth
+        self.power = 0
+
+    def compress(self, samples):
+        """Compress samples according to compression function."""
+        rms = np.sqrt(np.dot(samples, samples) / window)
+        power = self.power * (1.0 - self.smooth) + rms * self.smooth
+        self.power = power
+        if power <= 1e-40:
+            return
+        db_in = 10.0 * math.log10(power)
+
+        if db_in < self.threshold:
+            db_out = db_in
+        else:
+            # https://www.audio-issues.com/music-mixing/
+            # what-does-the-ratio-on-your-compressor-really-do/
+            db_out = (db_in - self.threshold) / self.ratio + self.threshold
+
+        db_gain = db_out - db_in + self.pregain
+        gain = 10**(0.1 * db_gain)
+        samples *= gain
+
+compressor = Compressor()
 
 # Queue for output windows.
 outq = queue.SimpleQueue()
@@ -37,11 +82,12 @@ def callback(in_data, frame_count, time_info, status):
     return (samples, pa.paContinue)
 
 def process_window():
-    frames = instream.read(window)
-    unpacked = array.array('h', frames)
-    samples = np.array(unpacked, dtype=np.dtype(np.float)) / 32768.0
-    reframed = (samples * 32767.0).astype(np.dtype(np.int16))
-    outq.put(bytes(reframed))
+    samples = instream.read(window)
+    samples = array.array('h', samples)
+    samples = np.array(samples, dtype=np.dtype(np.float)) / 32768.0
+    compressor.compress(samples)
+    samples = (samples * 32767.0).astype(np.dtype(np.int16))
+    outq.put(bytes(samples))
 
 # Audio sample format (16-bit signed LE).
 # pa_format = pa.get_format_from_width(2, unsigned=False)
