@@ -7,11 +7,10 @@
 # Compressor / Equalizer for microphone input
 
 import sys
-import numpy as np
-import math
-import pyaudio
+import pyaudio as pa
 import array
 import queue
+import numpy as np
 
 # Sample rate.
 rate = 48000
@@ -23,7 +22,7 @@ window = 1024
 outq = queue.SimpleQueue()
 
 # Window of zeros for underruns.
-zeros = bytes(array.array('h', [0] * window))
+zeros = array.array('h', [0] * window).tobytes()
 
 def callback(in_data, frame_count, time_info, status):
     """Supply frames to PortAudio."""
@@ -35,22 +34,32 @@ def callback(in_data, frame_count, time_info, status):
         samples = zeros
 
     # Return samples and continue signal.
-    return (samples, pyaudio.paContinue)
+    return (samples, pa.paContinue)
+
+def process_window():
+    frames = instream.read(window)
+    unpacked = array.array('h', frames)
+    samples = np.array(unpacked, dtype=np.dtype(np.float)) / 32768.0
+    reframed = (samples * 32767.0).astype(np.dtype(np.int16))
+    outq.put(bytes(reframed))
+
+# Audio sample format (16-bit signed LE).
+# pa_format = pa.get_format_from_width(2, unsigned=False)
+pa_format = pa.paInt16
 
 # Set up the audio streams.
-pa = pyaudio.PyAudio()
-instream = pa.open(
-    format=pa.get_format_from_width(2),
+pya = pa.PyAudio()
+instream = pya.open(
+    format=pa_format,
     channels=1,
     rate=48000,
     input=True,
     frames_per_buffer=window)
 
-samples = instream.read(window)
-outq.put(samples)
+process_window()
 
-outstream = pa.open(
-    format=pa.get_format_from_width(2),
+outstream = pya.open(
+    format=pa_format,
     channels=1,
     rate=48000,
     output=True,
@@ -58,8 +67,7 @@ outstream = pa.open(
     stream_callback=callback)
 
 while True:
-    samples = instream.read(window)
-    outq.put(samples)
+    process_window()
 
 # Done, clean up and exit.
 outstream.stop_stream()
