@@ -25,21 +25,30 @@ class Compressor(object):
     def __init__(self,
                  threshold=-15,
                  ratio=8.0,
-                 pregain=3.0,
+                 postgain=3.0,
                  smooth=0.5):
         """
         threshold is input level (dB) at which break occurs.
         ratio is compression ratio at break level.
-        pregain is preamplifier gain (dB).
+        postgain is preamplifier gain (dB).
         smooth is a smoothing constant between
           0.0 (use only current power measurement)
           1.0 (never change the power measurement)
         """
         self.threshold = threshold
         self.ratio = ratio
-        self.pregain = pregain
         self.smooth = smooth
         self.power = 0
+        self.postgain = postgain - self.cf(0)
+
+    def cf(self, db_in):
+        """Compression function."""
+        if db_in < self.threshold:
+            db_out = db_in
+        else:
+            # https://www.audio-issues.com/music-mixing/
+            # what-does-the-ratio-on-your-compressor-really-do/
+            db_out = (db_in - self.threshold) / self.ratio + self.threshold
 
     def compress(self, samples):
         """Compress samples according to compression function."""
@@ -49,15 +58,8 @@ class Compressor(object):
         if power <= 1e-40:
             return
         db_in = 10.0 * math.log10(power)
-
-        if db_in < self.threshold:
-            db_out = db_in
-        else:
-            # https://www.audio-issues.com/music-mixing/
-            # what-does-the-ratio-on-your-compressor-really-do/
-            db_out = (db_in - self.threshold) / self.ratio + self.threshold
-
-        db_gain = db_out - db_in + self.pregain
+        db_out = self.cf(db_in)
+        db_gain = db_out - db_in + self.postgain
         gain = 10**(0.1 * db_gain)
         samples *= gain
 
